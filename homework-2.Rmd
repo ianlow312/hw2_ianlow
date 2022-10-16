@@ -1,0 +1,211 @@
+---
+title: "Homework 2"
+author: "PSTAT 131/231"
+output:
+    html_document:
+      toc: true
+      toc_float: true
+      code_folding: show
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE,
+                      warning = FALSE)
+```
+
+## Linear Regression
+
+For this lab, we will be working with a data set from the UCI (University of California, Irvine) Machine Learning repository ([see website here](http://archive.ics.uci.edu/ml/datasets/Abalone)). The full data set consists of $4,177$ observations of abalone in Tasmania. (Fun fact: [Tasmania](https://en.wikipedia.org/wiki/Tasmania "Tasmania") supplies about $25\%$ of the yearly world abalone harvest.)
+
+![*Fig 1. Inside of an abalone shell.*](https://cdn.shopify.com/s/files/1/1198/8002/products/1d89434927bffb6fd1786c19c2d921fb_2000x_652a2391-5a0a-4f10-966c-f759dc08635c_1024x1024.jpg?v=1582320404){width="152"}
+
+The age of an abalone is typically determined by cutting the shell open and counting the number of rings with a microscope. The purpose of this data set is to determine whether abalone age (**number of rings + 1.5**) can be accurately predicted using other, easier-to-obtain information about the abalone.
+
+The full abalone data set is located in the `\data` subdirectory. Read it into *R* using `read_csv()`. Take a moment to read through the codebook (`abalone_codebook.txt`) and familiarize yourself with the variable definitions.
+
+Make sure you load the `tidyverse` and `tidymodels`!
+
+### Question 1
+
+Your goal is to predict abalone age, which is calculated as the number of rings plus 1.5. Notice there currently is no `age` variable in the data set. Add `age` to the data set.
+
+Assess and describe the distribution of `age`.
+
+```{r}
+library(tidyverse)
+library(ggplot2)
+library(reticulate)
+py_install("pandas")
+py_install("scikit-learn")
+data <- read.csv(file = "C:/Users/ianlo/Documents/Classes/PSTAT 131/Homeworks/hw2_ianlow/homework-2/data/abalone.csv")
+data$age <- data$rings + 1.5
+ggplot(data, aes(x=age)) + 
+  geom_histogram(color='light blue', binwidth=5, boundary=0) +
+  labs(title="Histogram of Abalone Age", x="Abalone Age")
+```
+\
+
+#### Answer:
+The vast majority of Abalones are estimated between 5 to 15 years old, and the age distribution tails off to 25+ years old.
+
+### Question 2
+
+Split the abalone data into a training set and a testing set. Use stratified sampling. You should decide on appropriate percentages for splitting the data.
+
+*Remember that you'll need to set a seed at the beginning of the document to reproduce your results.*
+
+```{python}
+#using python to stratify sample for fun
+import pandas as pd
+from sklearn.model_selection import train_test_split
+python_data = r.data
+stratified = python_data["type"]
+
+#stratifying on type, 70 train/30 test
+training, testing = train_test_split(python_data, test_size=0.3, random_state = 120, stratify = stratified) #random_state is the equivalent of setting a seed
+print(f"Training Set:\n{training}\n")
+print(f"Testing Set:\n{testing}")
+```
+
+Printing the distribution of the original, training, and testing datasets shows a relatively equal distribution of data based on the "type" attribute:
+
+```{python}
+original = python_data['type'].value_counts(normalize=True)
+train = training['type'].value_counts(normalize=True)
+test = testing['type'].value_counts(normalize=True)
+print(f"Original distribution: \n {original}\n")
+print(f"Training distribution: \n {train}\n")
+print(f"Testing distribution: \n {test}\n")
+```
+
+### Question 3
+
+Using the **training** data, create a recipe predicting the outcome variable, `age`, with all other predictor variables. Note that you should not include `rings` to predict `age`. Explain why you shouldn't use `rings` to predict `age`.
+
+Steps for your recipe:
+
+1.  dummy code any categorical predictors
+
+2.  create interactions between
+
+    -   `type` and `shucked_weight`,
+    -   `longest_shell` and `diameter`,
+    -   `shucked_weight` and `shell_weight`
+
+3.  center all predictors, and
+
+4.  scale all predictors.
+
+You'll need to investigate the `tidymodels` documentation to find the appropriate step functions to use.
+
+```{r}
+library(tidymodels)
+#storing the datasets created in python back into R variables
+original <- py$python_data
+training <- py$training
+testing <- py$testing
+
+#dummy code categorical variables
+abalone_recipe1 <- recipe(age ~ ., data = training) %>% 
+  step_dummy(all_nominal_predictors())
+
+#looking for relationships between predictors
+training %>% 
+  ggplot(aes(x = shucked_weight, y = reorder(type, shucked_weight))) + 
+  geom_boxplot() +
+  theme_bw() +
+  labs(x = "Shucked Weight", y = "Type")
+
+ggplot(training, aes(x=diameter, y=longest_shell)) + geom_point(size=2, shape=23)+
+  geom_smooth(method=lm)
+
+
+ggplot(training, aes(x=shucked_weight, y=shell_weight)) + geom_point(size=2, shape=23)+
+  geom_smooth(method=lm)
+
+
+#centering and scaling data
+library(dplyr)
+training2 <- training %>% mutate(across(where(is.numeric), scale))
+training2 = subset(training2, select = -c(rings) )
+abalone_recipe2 <- recipe(age ~ ., data = training2) %>% 
+  step_dummy(all_nominal_predictors())
+```
+
+
+
+### Question 4
+
+Create and store a linear regression object using the `"lm"` engine.
+
+```{r}
+lm_model <- linear_reg() %>%
+  set_engine("lm")
+```
+
+### Question 5
+
+Now:
+
+1.  set up an empty workflow,
+2.  add the model you created in Question 4, and
+3.  add the recipe that you created in Question 3.
+
+```{r}
+lm_wflow <- workflow() %>%
+  add_model(lm_model) %>%
+  add_recipe(abalone_recipe2)
+
+lm_fit <- fit(lm_wflow, training)
+
+lm_fit %>%
+  extract_fit_parsnip() %>%
+  tidy()
+```
+
+### Question 6
+
+Use your `fit()` object to predict the age of a hypothetical female abalone with longest_shell = 0.50, diameter = 0.10, height = 0.30, whole_weight = 4, shucked_weight = 1, viscera_weight = 2, shell_weight = 1.
+
+```{r}
+testdata <- data.frame (longest_shell  = 0.50,
+                  diameter = 0.10,
+                  height = 0.30,
+                  whole_weight = 4,
+                  shucked_weight = 1,
+                  viscera_weight = 2,
+                  shell_weight = 1,
+                  type = 'F')
+
+prediction <- predict(lm_fit, new_data = testdata)
+prediction
+```
+
+### Question 7
+
+Now you want to assess your model's performance. To do this, use the `yardstick` package:
+
+1.  Create a metric set that includes *R^2^*, RMSE (root mean squared error), and MAE (mean absolute error).
+2.  Use `predict()` and `bind_cols()` to create a tibble of your model's predicted values from the **training data** along with the actual observed ages (these are needed to assess your model's performance).
+3.  Finally, apply your metric set to the tibble, report the results, and interpret the *R^2^* value.
+
+```{r}
+library(yardstick)
+multi_metric <- metric_set(rsq, rmse, mae)
+
+prediction <- predict(lm_fit, new_data = training)
+colnames(prediction)[1] ="Prediction"
+prediction_table <- bind_cols(training$age, prediction, id=NULL)
+colnames(prediction_table)[1] = "Age"
+prediction_table
+
+training %>%
+  multi_metric(truth = prediction_table$Age, estimate = prediction_table$Prediction)
+```
+
+#### Answer:
+The *R^2^* value of this model is 0.535, RMSE is 2.181, and the MAE is 1.574. \
+\
+Because the *R^2^* value is 0.535, 53.5% of the total variability observed in Age is explained by the model.
+
+
